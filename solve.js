@@ -1,10 +1,9 @@
 const puppeteer = require('puppeteer');
 
-const THM_USERNAME = process.env.THM_USERNAME;
-const THM_PASSWORD = process.env.THM_PASSWORD;
+const THM_SESSION = process.env.THM_SESSION || '';
 
-async function solveTHMChallenge() {
-  console.log(`[${new Date().toISOString()}] Starting TryHackMe solver...`);
+async function solveTodaysChallenge() {
+  console.log(`[${new Date().toISOString()}] TryHackMe Auto-Solver started...`);
   
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -15,158 +14,79 @@ async function solveTHMChallenge() {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1024 });
     
-    // Navigate to login
-    console.log('[LOG] Navigating to TryHackMe login...');
-    await page.goto('https://tryhackme.com/login', { waitUntil: 'networkidle2' });
-    await page.waitForTimeout(2000);
-    
-    // Try multiple selector patterns for username/email field
-    const usernameSelectors = [
-      'input[placeholder*="email"]',
-      'input[placeholder*="username"]',
-      'input[placeholder*="Email"]',
-      'input[type="text"]',
-      'input:nth-of-type(1)'
-    ];
-    
-    let usernameFound = false;
-    for (const selector of usernameSelectors) {
-      const element = await page.$(selector);
-      if (element) {
-        console.log(`[LOG] Found username field with selector: ${selector}`);
-        await element.type(THM_USERNAME, { delay: 50 });
-        usernameFound = true;
-        break;
-      }
+    // Set cookies to bypass login if available
+    if (THM_SESSION) {
+      console.log('[LOG] Setting authentication cookies...');
+      await page.setCookie({
+        name: 'Session',
+        value: THM_SESSION,
+        domain: 'tryhackme.com',
+        path: '/'
+      });
     }
-    
-    if (!usernameFound) {
-      throw new Error('Could not find username input field');
-    }
-    
-    // Password field
-    const passwordSelectors = [
-      'input[placeholder*="password"]',
-      'input[placeholder*="Password"]',
-      'input[type="password"]',
-      'input:nth-of-type(2)'
-    ];
-    
-    let passwordFound = false;
-    for (const selector of passwordSelectors) {
-      const element = await page.$(selector);
-      if (element) {
-        console.log(`[LOG] Found password field with selector: ${selector}`);
-        await element.type(THM_PASSWORD, { delay: 50 });
-        passwordFound = true;
-        break;
-      }
-    }
-    
-    if (!passwordFound) {
-      throw new Error('Could not find password input field');
-    }
-    
-    // Click login button
-    console.log('[LOG] Looking for login button...');
-    const buttonSelectors = [
-      'button:contains("Log in")',
-      'button[type="submit"]',
-      'button:nth-of-type(1)'
-    ];
-    
-    let loginClicked = false;
-    for (const selector of buttonSelectors) {
-      try {
-        await page.click(selector);
-        loginClicked = true;
-        console.log(`[LOG] Clicked button with selector: ${selector}`);
-        break;
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!loginClicked) {
-      throw new Error('Could not find login button');
-    }
-    
-    // Wait for login to complete
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
-    console.log('[LOG] Login successful!');
     
     // Get today's day
     const today = new Date().getDate();
     const day = today > 24 ? 24 : today;
     
-    // Navigate to room
-    console.log(`[LOG] Navigating to Day ${day} challenge...`);
+    // Navigate directly to today's challenge
+    console.log(`[LOG] Loading Day ${day} challenge...`);
     const roomUrl = `https://tryhackme.com/adventofcyber25/${day}`;
     await page.goto(roomUrl, { waitUntil: 'networkidle2' });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     
-    // Check if already complete
+    // Get page content
+    const pageContent = await page.content();
     const pageText = await page.evaluate(() => document.body.innerText);
-    if (pageText.includes('100%')) {
-      console.log(`[SUCCESS] Day ${day} already at 100%!`);
+    
+    // Check if already 100%
+    if (pageText.includes('100%') || pageContent.includes('complete')) {
+      console.log(`[SUCCESS] Day ${day} already complete (100%)!`);
       await browser.close();
-      return { day, status: 'complete', message: 'Already 100% complete' };
+      return { day, status: 'already_complete', progress: '100%' };
     }
     
-    // Find and fill form fields
-    const formInputs = await page.$$('input[type="text"], textarea');
-    console.log(`[LOG] Found ${formInputs.length} input fields`);
+    console.log(`[LOG] Extracting challenge content for Day ${day}...`);
     
-    for (let i = 0; i < formInputs.length; i++) {
+    // Find all input fields on the page
+    const inputs = await page.$$('input[type="text"], textarea');
+    console.log(`[LOG] Found ${inputs.length} input fields`);
+    
+    // Extract answers from page content
+    const flags = pageText.match(/THM\{[^}]+\}/g) || [];
+    console.log(`[LOG] Found ${flags.length} potential answers`);
+    
+    // Fill input fields with extracted answers
+    for (let i = 0; i < Math.min(inputs.length, flags.length); i++) {
       try {
-        const value = await (await formInputs[i].getProperty('value')).jsonValue();
-        const placeholder = await (await formInputs[i].getProperty('placeholder')).jsonValue();
-        
-        if (!value) {
-          // Try to extract answer from page content
-          const lines = pageText.split('\n');
-          let answer = null;
-          
-          for (const line of lines) {
-            if (line.includes('THM{') && line.includes('}')) {
-              const match = line.match(/THM\{[^}]+\}/);
-              if (match) {
-                answer = match[0];
-                break;
-              }
-            }
-          }
-          
-          if (answer) {
-            console.log(`[LOG] Filling field ${i + 1} with: ${answer}`);
-            await formInputs[i].type(answer);
-          }
-        }
+        console.log(`[LOG] Filling field ${i + 1} with: ${flags[i]}`);
+        await inputs[i].type(flags[i], { delay: 30 });
       } catch (e) {
-        console.log(`[LOG] Skipped field ${i + 1}: ${e.message}`);
+        console.log(`[LOG] Could not fill field ${i + 1}`);
       }
     }
     
-    // Find and click submit button
+    // Find and click Check/Submit button
     const buttons = await page.$$('button');
     for (const button of buttons) {
       const text = await (await button.getProperty('textContent')).jsonValue();
       if (text && (text.includes('Check') || text.includes('Submit'))) {
-        console.log('[LOG] Clicking submit button...');
+        console.log('[LOG] Clicking Check button...');
         await button.click();
         await page.waitForTimeout(2000);
         break;
       }
     }
     
-    // Check final progress
+    // Get final progress
     const finalText = await page.evaluate(() => document.body.innerText);
     const progressMatch = finalText.match(/(\d+)%/);
     const progress = progressMatch ? progressMatch[1] : 'unknown';
     
-    console.log(`[SUCCESS] Day ${day} completed! Progress: ${progress}%`);
+    console.log(`[SUCCESS] Day ${day} completed with ${progress}% progress`);
+    
     await browser.close();
-    return { day, status: 'success', progress, message: `Day ${day} completed` };
+    return { day, status: 'success', progress, timestamp: new Date().toISOString() };
     
   } catch (error) {
     console.error(`[ERROR] ${error.message}`);
@@ -176,7 +96,8 @@ async function solveTHMChallenge() {
 }
 
 (async () => {
-  const result = await solveTHMChallenge();
-  console.log('\n[FINAL RESULT]', JSON.stringify(result, null, 2));
-  process.exit(result.status === 'success' || result.status === 'complete' ? 0 : 1);
+  const result = await solveTodaysChallenge();
+  console.log('\n[FINAL RESULT]');
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.status === 'success' || result.status === 'already_complete' ? 0 : 1);
 })();
