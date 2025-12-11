@@ -1,0 +1,16 @@
+{
+  "name": "tryhackme-auto-complete",
+  "version": "1.0.0",
+  "description": "Automatic TryHackMe Advent of Cyber solver",
+  "main": "solve.js",
+  "scripts": {
+    "start": "node solve.js",
+    "test": "node solve.js"
+  },
+  "keywords": ["tryhackme", "automation"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer": "^21.0.0"
+  }
+}
