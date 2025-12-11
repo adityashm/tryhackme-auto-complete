@@ -2,6 +2,8 @@ const puppeteer = require('puppeteer');
 
 const THM_SESSION = process.env.THM_SESSION || '';
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 async function solveTodaysChallenge() {
   console.log(`[${new Date().toISOString()}] TryHackMe Auto-Solver started...`);
   
@@ -14,79 +16,55 @@ async function solveTodaysChallenge() {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1024 });
     
-    // Set cookies to bypass login if available
-    if (THM_SESSION) {
-      console.log('[LOG] Setting authentication cookies...');
-      await page.setCookie({
-        name: 'Session',
-        value: THM_SESSION,
-        domain: 'tryhackme.com',
-        path: '/'
-      });
-    }
-    
-    // Get today's day
     const today = new Date().getDate();
     const day = today > 24 ? 24 : today;
     
-    // Navigate directly to today's challenge
     console.log(`[LOG] Loading Day ${day} challenge...`);
     const roomUrl = `https://tryhackme.com/adventofcyber25/${day}`;
     await page.goto(roomUrl, { waitUntil: 'networkidle2' });
-    await page.waitForTimeout(3000);
+    await sleep(3000);
     
-    // Get page content
-    const pageContent = await page.content();
     const pageText = await page.evaluate(() => document.body.innerText);
     
-    // Check if already 100%
-    if (pageText.includes('100%') || pageContent.includes('complete')) {
-      console.log(`[SUCCESS] Day ${day} already complete (100%)!`);
+    if (pageText.includes('100%')) {
+      console.log(`[SUCCESS] Day ${day} already 100% complete!`);
       await browser.close();
-      return { day, status: 'already_complete', progress: '100%' };
+      return { day, status: 'already_complete' };
     }
     
-    console.log(`[LOG] Extracting challenge content for Day ${day}...`);
+    console.log(`[LOG] Extracting flags from Day ${day}...`);
+    const flags = pageText.match(/THM\{[^}]+\}/g) || [];
+    console.log(`[LOG] Found ${flags.length} flags`);
     
-    // Find all input fields on the page
     const inputs = await page.$$('input[type="text"], textarea');
     console.log(`[LOG] Found ${inputs.length} input fields`);
     
-    // Extract answers from page content
-    const flags = pageText.match(/THM\{[^}]+\}/g) || [];
-    console.log(`[LOG] Found ${flags.length} potential answers`);
-    
-    // Fill input fields with extracted answers
     for (let i = 0; i < Math.min(inputs.length, flags.length); i++) {
       try {
         console.log(`[LOG] Filling field ${i + 1} with: ${flags[i]}`);
         await inputs[i].type(flags[i], { delay: 30 });
       } catch (e) {
-        console.log(`[LOG] Could not fill field ${i + 1}`);
+        console.log(`[LOG] Error filling field: ${e.message}`);
       }
     }
     
-    // Find and click Check/Submit button
     const buttons = await page.$$('button');
-    for (const button of buttons) {
-      const text = await (await button.getProperty('textContent')).jsonValue();
+    for (const btn of buttons) {
+      const text = await (await btn.getProperty('textContent')).jsonValue();
       if (text && (text.includes('Check') || text.includes('Submit'))) {
-        console.log('[LOG] Clicking Check button...');
-        await button.click();
-        await page.waitForTimeout(2000);
+        console.log('[LOG] Clicking submit button...');
+        await btn.click();
+        await sleep(2000);
         break;
       }
     }
     
-    // Get final progress
     const finalText = await page.evaluate(() => document.body.innerText);
-    const progressMatch = finalText.match(/(\d+)%/);
-    const progress = progressMatch ? progressMatch[1] : 'unknown';
+    const progress = (finalText.match(/(\d+)%/) || [])[1] || 'unknown';
     
     console.log(`[SUCCESS] Day ${day} completed with ${progress}% progress`);
-    
     await browser.close();
-    return { day, status: 'success', progress, timestamp: new Date().toISOString() };
+    return { day, status: 'success', progress };
     
   } catch (error) {
     console.error(`[ERROR] ${error.message}`);
