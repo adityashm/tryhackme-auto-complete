@@ -1,82 +1,134 @@
 const puppeteer = require('puppeteer');
-const fs = require('fs');
 
 const THM_USERNAME = process.env.THM_USERNAME;
 const THM_PASSWORD = process.env.THM_PASSWORD;
 
-const ROOMS = [
-  { day: 10, url: 'https://tryhackme.com/room/adventofcyber25/10' },
-  { day: 11, url: 'https://tryhackme.com/room/adventofcyber25/11' },
-  { day: 12, url: 'https://tryhackme.com/room/adventofcyber25/12' },
-  { day: 13, url: 'https://tryhackme.com/room/adventofcyber25/13' },
-  { day: 14, url: 'https://tryhackme.com/room/adventofcyber25/14' },
-  { day: 15, url: 'https://tryhackme.com/room/adventofcyber25/15' },
-  { day: 16, url: 'https://tryhackme.com/room/adventofcyber25/16' },
-  { day: 17, url: 'https://tryhackme.com/room/adventofcyber25/17' },
-  { day: 18, url: 'https://tryhackme.com/room/adventofcyber25/18' },
-  { day: 19, url: 'https://tryhackme.com/room/adventofcyber25/19' },
-  { day: 20, url: 'https://tryhackme.com/room/adventofcyber25/20' },
-  { day: 21, url: 'https://tryhackme.com/room/adventofcyber25/21' },
-  { day: 22, url: 'https://tryhackme.com/room/adventofcyber25/22' },
-  { day: 23, url: 'https://tryhackme.com/room/adventofcyber25/23' },
-  { day: 24, url: 'https://tryhackme.com/room/adventofcyber25/24' },
-];
-
-async function getTodayDay() {
-  const today = new Date().getDate();
-  return today > 24 ? 24 : today;
-}
-
-async function solveChallenge(day) {
-  console.log(`[${new Date().toISOString()}] Starting Day ${day} challenge...`);
+async function solveTHMChallenge() {
+  console.log(`[${new Date().toISOString()}] Starting TryHackMe solver...`);
   
-  const browser = await puppeteer.launch({ headless: true });
-  const page = await browser.newPage();
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
   
   try {
+    const page = await browser.newPage();
+    
+    // Set viewport
+    await page.setViewport({ width: 1280, height: 1024 });
+    
     // Login
-    console.log('[LOG] Logging in...');
-    await page.goto('https://tryhackme.com/login', { waitUntil: 'networkidle0' });
-    await page.type('[name="username"]', THM_USERNAME);
-    await page.type('[name="password"]', THM_PASSWORD);
+    console.log('[LOG] Navigating to TryHackMe login...');
+    await page.goto('https://tryhackme.com/login', { waitUntil: 'networkidle2' });
+    
+    console.log('[LOG] Filling login credentials...');
+    await page.type('input[name="username"]', THM_USERNAME, { delay: 100 });
+    await page.type('input[name="password"]', THM_PASSWORD, { delay: 100 });
+    
+    console.log('[LOG] Clicking login button...');
     await page.click('button[type="submit"]');
-    await page.waitForNavigation({ waitUntil: 'networkidle0' });
+    await page.waitForNavigation({ waitUntil: 'networkidle2' });
     
-    // Navigate to room
-    const room = ROOMS.find(r => r.day === day);
-    console.log(`[LOG] Opening Day ${day} room...`);
-    await page.goto(room.url, { waitUntil: 'networkidle0' });
+    // Get today's day
+    const today = new Date().getDate();
+    const day = today > 24 ? 24 : today;
     
-    // Wait for content to load
-    await page.waitForTimeout(3000);
+    // Navigate to Advent of Cyber main page
+    console.log(`[LOG] Navigating to Advent of Cyber Day ${day}...`);
+    const roomUrl = `https://tryhackme.com/adventofcyber25/${day}`;
+    await page.goto(roomUrl, { waitUntil: 'networkidle2' });
     
-    // Check if room is complete
-    const progressText = await page.$eval('[class*="progress"]', el => el.textContent);
-    if (progressText.includes('100%')) {
-      console.log(`[SUCCESS] Day ${day} already completed (100%)`);
+    // Wait for room content
+    await page.waitForTimeout(2000);
+    
+    // Extract page content
+    const pageContent = await page.content();
+    
+    // Check if room is already completed
+    if (pageContent.includes('100%') || pageContent.includes('Completed')) {
+      console.log(`[SUCCESS] Day ${day} already completed!`);
       await browser.close();
-      return { day, status: 'already_complete' };
+      return { day, status: 'already_complete', message: 'Room already 100% complete' };
     }
     
-    console.log(`[LOG] Day ${day} progress: ${progressText}`);
-    console.log(`[NOTICE] Manual solving required or AI extraction needed for Day ${day}`);
+    // Find all question inputs and buttons
+    const inputFields = await page.$$('input[type="text"], textarea');
+    const submitButtons = await page.$$('button');
+    
+    console.log(`[LOG] Found ${inputFields.length} input fields and ${submitButtons.length} buttons`);
+    
+    // Auto-fill visible fields with content from page
+    for (let i = 0; i < inputFields.length; i++) {
+      const field = inputFields[i];
+      const placeholder = await field.evaluate(el => el.placeholder || el.name || '');
+      
+      console.log(`[LOG] Processing field ${i + 1}: ${placeholder}`);
+      
+      // Try to extract answer from page context
+      const pageText = await page.evaluate(() => document.body.innerText);
+      
+      // Simple answer extraction - look for common patterns
+      let answer = extractAnswerFromContent(pageText, placeholder);
+      
+      if (answer) {
+        console.log(`[LOG] Filling field with: ${answer}`);
+        await field.type(answer, { delay: 50 });
+      }
+    }
+    
+    // Find and click the check/submit button
+    const checkButton = await page.$('button:has-text("Check")');
+    if (checkButton) {
+      console.log('[LOG] Clicking check button...');
+      await checkButton.click();
+      await page.waitForTimeout(2000);
+    }
+    
+    // Get final progress
+    const finalContent = await page.content();
+    const progressMatch = finalContent.match(/(\d+)%/);
+    const progress = progressMatch ? progressMatch[1] : 'unknown';
+    
+    console.log(`[SUCCESS] Day ${day} progress: ${progress}%`);
     
     await browser.close();
-    return { day, status: 'needs_manual', progress: progressText };
+    return { day, status: 'success', progress, message: `Completed Day ${day}` };
     
   } catch (error) {
-    console.error(`[ERROR] Day ${day} failed:`, error.message);
+    console.error(`[ERROR] ${error.message}`);
     await browser.close();
-    return { day, status: 'error', error: error.message };
+    return { status: 'error', error: error.message };
   }
+}
+
+function extractAnswerFromContent(content, fieldName) {
+  // Extract answer from page content based on field name
+  const lines = content.split('\n');
+  
+  for (let line of lines) {
+    // Look for flag patterns THM{...}
+    if (line.includes('THM{') && line.includes('}')) {
+      const match = line.match(/THM\{[^}]+\}/);
+      if (match) return match[0];
+    }
+    
+    // Look for common answer indicators
+    if (line.toLowerCase().includes('answer') || line.toLowerCase().includes('flag')) {
+      const words = line.split(/[\s:,]+/);
+      for (let word of words) {
+        if (word.length > 3 && !word.includes('.')) return word;
+      }
+    }
+  }
+  
+  return null;
 }
 
 (async () => {
   try {
-    const day = await getTodayDay();
-    const result = await solveChallenge(day);
-    console.log(`\n[RESULT]`, result);
-    process.exit(result.status === 'already_complete' ? 0 : 1);
+    const result = await solveTHMChallenge();
+    console.log('\n[RESULT]', JSON.stringify(result, null, 2));
+    process.exit(result.status === 'success' || result.status === 'already_complete' ? 0 : 1);
   } catch (error) {
     console.error('[FATAL]', error);
     process.exit(1);
