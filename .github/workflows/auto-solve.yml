@@ -1,0 +1,29 @@
+name: TryHackMe Auto-Solve Daily
+
+on:
+  schedule:
+    # Runs every day at 3:30 PM UTC (9:00 PM IST)
+    - cron: '30 15 * * *'
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  solve-challenge:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies
+        run: npm install
+      
+      - name: Run auto-solver
+        env:
+          THM_USERNAME: ${{ secrets.THM_USERNAME }}
+          THM_PASSWORD: ${{ secrets.THM_PASSWORD }}
+          CURRENT_DAY: ${{ github.event.inputs.day || 'auto' }}
+        run: node solve.js
